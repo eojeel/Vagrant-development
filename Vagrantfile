@@ -1,0 +1,448 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+require 'yaml'
+
+VAGRANTFILE_API_VERSION = "2"
+
+
+# fetch dev's custom settings
+file = 'vagrant.yml'
+
+unless File.file?(file)
+    FileUtils.cp(file + '.default', file)
+end
+
+settings = YAML.load_file File.join __dir__, file
+
+cpus = settings['virtualbox']['cpus']
+ram = settings['virtualbox']['ram']
+
+testsite = settings['path']['testsite']
+manage = settings['path']['manage']
+internal = settings['path']['internal']
+local = settings['path']['local']
+
+network_type = settings['network']['type']
+network_ip = settings['network']['ip']
+
+tld = settings['tld']
+
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+    config.vm.box = "ubuntu/trusty64"
+    
+    unless network_ip.empty?
+        config.vm.network network_type, ip: network_ip
+    else
+        config.vm.network network_type
+    end
+
+    config.vm.provision :shell, inline: $setup
+    config.vm.provision :shell, inline: $startup,
+      run: "always"
+
+    config.vm.synced_folder testsite, "/var/www/vhosts/testsite.co.uk/httpdocs"
+    config.vm.synced_folder manage, "/var/www/vhosts/manage.testsite.co.uk/httpdocs"
+    config.vm.synced_folder internal, "/var/www/vhosts/testsiteinternal/httpdocs"
+    config.vm.synced_folder local, "/var/www/vhosts/local"
+
+    config.vm.provider "virtualbox" do |vb|
+        # Display the VirtualBox GUI when booting the machine
+        vb.gui = false
+        # Customize the amount of memory on the VM:
+        vb.memory = ram
+        # set number of cpus to use:
+        vb.cpus = cpus
+    end
+end
+
+
+
+$vhost_force_ssl = <<VHOSTFORCESSL
+<VirtualHost *:80>
+    ServerAdmin admin@testsite.co.uk
+
+    ServerName testsite.#{tld}
+    ServerAlias www.testsite.#{tld}
+    ServerAlias testseeker.testsite.#{tld}
+    ServerAlias manage.testsite.#{tld}
+    ServerAlias internal.testsite.#{tld}
+    ServerAlias local.testsite.#{tld}
+
+    RewriteEngine On
+    RewriteCond %{HTTPS} off
+    RewriteRule (.*) https://%{SERVER_NAME}/$1 [R,L]
+
+    DocumentRoot /var/www/html/
+</VirtualHost>
+VHOSTFORCESSL
+
+$vhost_testsite = <<VHOSTtestsite
+<VirtualHost *:443 *:8002>
+    ServerAdmin admin@testsite.co.uk
+    ServerName testsite.#{tld}
+    ServerAlias www.testsite.#{tld}
+    ServerAlias m.testsite.#{tld}
+
+    SSLEngine on
+    SSLCertificateFile /vagrant/ssl/testsite.#{tld}.crt
+    SSLCertificateKeyFile /vagrant/ssl/testsite.#{tld}.key
+
+    DocumentRoot /var/www/vhosts/testsite.co.uk/httpdocs/
+    <Directory /var/www/vhosts/testsite.co.uk/httpdocs/>
+        Options Indexes FollowSymLinks MultiViews
+        AllowOverride All
+        Order allow,deny
+        allow from all
+        AddOutputFilterByType DEFLATE text/plain text/html text/xml tex$
+    </Directory>
+    <Directory />
+        Options FollowSymLinks
+        AllowOverride None
+    </Directory>
+
+    ScriptAlias /cgi-bin/ /usr/lib/cgi-bin/
+    <Directory "/usr/lib/cgi-bin">
+        AllowOverride None
+        Options +ExecCGI -MultiViews +SymLinksIfOwnerMatch
+        Order allow,deny
+        Allow from all
+    </Directory>
+    <Directory /var/www/vhosts/testsite.co.uk/httpdocs/secure>
+        SSLOptions +StrictRequire
+        SSLRequireSSL
+    </Directory>
+
+    ErrorLog ${APACHE_LOG_DIR}/develop-testsite_error.log
+
+    # Possible values include: debug, info, notice, warn, error, crit, alert, emerg.
+    LogLevel warn
+
+    CustomLog ${APACHE_LOG_DIR}/develop-testsite_access.log combined
+
+    Alias /doc/ "/usr/share/doc/"
+    <Directory "/usr/share/doc/">
+        Options Indexes MultiViews FollowSymLinks
+        AllowOverride None
+        Order deny,allow
+        Deny from all
+        Allow from 127.0.0.0/255.0.0.0 ::1/128
+    </Directory>
+</VirtualHost>
+VHOSTtestsite
+
+$vhost_manage = <<VHOSTMANAGE
+<VirtualHost *:443 *:8001>
+    ServerAdmin admin@testsite.co.uk
+    ServerName manage.testsite.#{tld}
+
+	SSLEngine on
+    SSLCertificateFile /vagrant/ssl/manage.testsite.#{tld}.crt
+    SSLCertificateKeyFile /vagrant/ssl/manage.testsite.#{tld}.key
+
+    DocumentRoot /var/www/vhosts/manage.testsite.co.uk/httpdocs/
+    <Directory /var/www/vhosts/manage.testsite.co.uk/httpdocs/>
+        Options Indexes FollowSymLinks MultiViews
+        AllowOverride All
+        Order allow,deny
+        allow from all
+        AddOutputFilterByType DEFLATE text/plain text/html text/xml tex$
+    </Directory>
+    <Directory />
+        Options FollowSymLinks
+        AllowOverride None
+    </Directory>
+    <Directory /var/www/vhosts/manage.testsite.co.uk/httpdocs>
+        Options Indexes FollowSymLinks MultiViews
+        AllowOverride None
+        Order allow,deny
+        allow from all
+    </Directory>
+
+    ScriptAlias /cgi-bin/ /usr/lib/cgi-bin/
+    <Directory "/usr/lib/cgi-bin">
+        AllowOverride None
+        Options +ExecCGI -MultiViews +SymLinksIfOwnerMatch
+        Order allow,deny
+        Allow from all
+    </Directory>
+
+    ErrorLog ${APACHE_LOG_DIR}/develop-manage_error.log
+
+    # Possible values include: debug, info, notice, warn, error, crit,
+    # alert, emerg.
+    LogLevel warn
+
+    CustomLog ${APACHE_LOG_DIR}/develop-manage_access.log combined
+
+    Alias /doc/ "/usr/share/doc/"
+    <Directory "/usr/share/doc/">
+        Options Indexes MultiViews FollowSymLinks
+        AllowOverride None
+        Order deny,allow
+        Deny from all
+        Allow from 127.0.0.0/255.0.0.0 ::1/128
+    </Directory>
+</VirtualHost>
+VHOSTMANAGE
+
+$vhost_internal = <<VHOSTINTERNAL
+<VirtualHost *:443 *:8004>
+    ServerAdmin admin@testsite.co.uk
+    ServerName internal.testsite.#{tld}
+
+	SSLEngine on
+    SSLCertificateFile /vagrant/ssl/internal.testsite.#{tld}.crt
+    SSLCertificateKeyFile /vagrant/ssl/internal.testsite.#{tld}.key
+
+    DocumentRoot /var/www/vhosts/testsiteinternal/httpdocs/
+    <Directory /var/www/vhosts/testsiteinternal/httpdocs/>
+        Options Indexes FollowSymLinks MultiViews
+        AllowOverride All
+        Order allow,deny
+        allow from all
+        AddOutputFilterByType DEFLATE text/plain text/html text/xml tex$
+    </Directory>
+    <Directory />
+        Options FollowSymLinks
+        AllowOverride None
+    </Directory>
+
+    ScriptAlias /cgi-bin/ /usr/lib/cgi-bin/
+    <Directory "/usr/lib/cgi-bin">
+        AllowOverride None
+        Options +ExecCGI -MultiViews +SymLinksIfOwnerMatch
+        Order allow,deny
+        Allow from all
+    </Directory>
+
+    ErrorLog ${APACHE_LOG_DIR}/develop-testsiteinternal_error.log
+
+    # Possible values include: debug, info, notice, warn, error, crit,
+    # alert, emerg.
+    LogLevel warn
+
+    CustomLog ${APACHE_LOG_DIR}/develop-testsiteinternal_access.log combined
+
+    Alias /doc/ "/usr/share/doc/"
+    <Directory "/usr/share/doc/">
+        Options Indexes MultiViews FollowSymLinks
+        AllowOverride None
+        Order deny,allow
+        Deny from all
+        Allow from 127.0.0.0/255.0.0.0 ::1/128
+    </Directory>
+</VirtualHost>
+VHOSTINTERNAL
+
+$vhost_utilities = <<VHOSTUTILITIES
+<VirtualHost *:80>
+    ServerAdmin admin@testsite.co.uk
+    ServerName utilities.testsite.#{tld}
+    
+	DocumentRoot /var/www/vhosts/utilities/public
+	ErrorLog ${APACHE_LOG_DIR}/error.log
+	CustomLog ${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
+VHOSTUTILITIES
+
+$vhost_local = <<VHOSTLOCAL
+<VirtualHost *:443>
+    ServerAdmin admin@testsite.co.uk
+    ServerName local.testsite.#{tld}
+
+    SSLEngine on
+    SSLCertificateFile /vagrant/ssl/local.testsite.#{tld}.crt
+    SSLCertificateKeyFile /vagrant/ssl/local.testsite.#{tld}.key
+    
+    DocumentRoot /var/www/vhosts/local/public
+    
+    <Directory /var/www/>
+        Options Indexes FollowSymLinks MultiViews
+        AllowOverride All
+        Order allow,deny
+        allow from all
+    </Directory>
+
+	ErrorLog ${APACHE_LOG_DIR}/error.log
+	CustomLog ${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
+VHOSTLOCAL
+
+$phpini = <<PHPINI
+; short tags
+short_open_tag=On
+
+; massive errors!
+display_errors = on
+html_errors = on
+
+; Added for xdebug
+[XDebug]
+xdebug.remote_enable=1
+xdebug.remote_autostart = 1
+xdebug.remote_handler=dbgp
+xdebug.remote_mode=req
+xdebug.remote_host=192.168.33.1
+xdebug.remote_port=9001
+xdebug.remote_log = /var/log/xdebug.log
+xdebug.auto_trace = 1
+; Added for stats
+extension=stats.so
+PHPINI
+
+$setup = <<SCRIPT
+cd ~/
+set -ex
+
+PHPINI_APACHE="/etc/php/5.6/apache2/php.ini"
+PHPINI_CLI="/etc/php/5.6/cli/php.ini"
+
+# install prerequisites
+add-apt-repository ppa:ondrej/php # php 5.6
+apt-get update -qq
+apt-get upgrade -qy
+apt-get install -q -y apache2 curl php5.6 openssl memcached imagemagick php5.6-memcache php5.6-mysql php5.6-imagick mcrypt php5.6-mcrypt php5.6-curl php5.6-mbstring php5.6-xml php5.6-gd
+# dev stuff
+apt-get install -q -y php5.6-xdebug php5.6-dev
+# use php5.6 and install stats-1.0.5
+update-alternatives --set php /usr/bin/php5.6
+pecl install stats-1.0.5
+
+
+# ensure apache is set to launch at boot
+update-rc.d apache2 enable
+
+# required to make things work
+a2enmod expires
+a2enmod file_cache
+a2enmod php5.6
+a2enmod rewrite
+a2enmod ssl
+
+# other mods loaded onto production server
+a2enmod actions
+a2enmod alias
+a2enmod auth_basic
+a2enmod auth_digest
+a2enmod authn_anon
+a2enmod authn_dbm
+a2enmod authn_file
+a2enmod authnz_ldap
+a2enmod authz_dbm
+a2enmod authz_groupfile
+a2enmod authz_host
+a2enmod authz_owner
+a2enmod authz_user
+a2enmod autoindex
+a2enmod cache
+a2enmod cgi
+a2enmod deflate
+a2enmod dir
+a2enmod env
+a2enmod ext_filter
+a2enmod headers
+a2enmod include
+a2enmod mime
+a2enmod mime_magic
+a2enmod mpm_prefork
+a2enmod negotiation
+a2enmod setenvif
+a2enmod status
+a2enmod substitute
+a2enmod suexec
+a2enmod unique_id
+a2enmod usertrack
+# a2enmod authn_alias
+# a2enmod authn_default
+# a2enmod authz_default
+# a2enmod core
+# a2enmod disk_cache
+# a2enmod http
+# a2enmod ldap_module
+# a2enmod log_config
+# a2enmod logio
+# a2enmod pagespeed
+# a2enmod perl
+# a2enmod proxy
+# a2enmod proxy_ajp
+# a2enmod proxy_balancer
+# a2enmod proxy_connect
+# a2enmod proxy_ftp
+# a2enmod proxy_http
+# a2enmod security2
+# a2enmod so
+# a2enmod spelling
+# a2enmod userdir
+# a2enmod version
+# a2enmod vhost
+
+#phpenmod mcrypt
+
+echo -e "ServerName testsite.#{tld}" >> /etc/apache2/apache2.conf
+
+echo -e "#{$vhost_testsite}" > /etc/apache2/sites-available/testsite.conf
+echo -e "#{$vhost_manage}" > /etc/apache2/sites-available/manage.conf
+echo -e "#{$vhost_internal}" > /etc/apache2/sites-available/internal.conf
+echo -e "#{$vhost_utilities}" > /etc/apache2/sites-available/utilities.conf
+echo -e "#{$vhost_local}" > /etc/apache2/sites-available/local.conf
+echo -e "#{$vhost_force_ssl}" > /etc/apache2/sites-available/force_ssl.conf
+a2dissite 000-default
+a2ensite testsite.conf
+a2ensite manage.conf
+a2ensite internal.conf
+a2ensite utilities.conf
+a2ensite local.conf
+a2ensite force_ssl.conf
+
+# add basic utilities
+mkdir -p /var/www/vhosts/utilities/public
+echo -e '<h1>Vagrant</h1><a href="phpinfo.php">PHP Info</a>' > /var/www/vhosts/utilities/public/index.php
+echo -e "<?php phpinfo() ?>" > /var/www/vhosts/utilities/public/phpinfo.php
+
+# install ioncube
+curl -so ioncube.tar.gz https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz
+tar -xvzf ioncube.tar.gz -C /usr/local
+
+# append xdebug config
+echo -e "#{$phpini}" >> $PHPINI_APACHE
+
+# add extensions to php.ini
+extensionsdir=$(php-config --extension-dir)
+# ioncube
+echo -e 'zend_extension="/usr/local/ioncube/ioncube_loader_lin_5.6.so"' >> $PHPINI_APACHE
+echo -e 'zend_extension="/usr/local/ioncube/ioncube_loader_lin_5.6.so"' >> $PHPINI_CLI
+# xdebug - (build path dynamically)
+echo -e -n 'zend_extension="' >> $PHPINI_APACHE
+echo -e -n $extensionsdir >> $PHPINI_APACHE
+echo -e '/xdebug.so"' >> $PHPINI_APACHE
+echo -e -n 'zend_extension="' >> $PHPINI_CLI
+echo -e -n $extensionsdir >> $PHPINI_CLI
+echo -e '/xdebug.so"' >> $PHPINI_CLI
+
+# install testsite's root SSL cert for development
+mkdir -p /usr/share/ca-certificates/testsite
+openssl x509 -inform PEM -in /vagrant/ssl/root/testsite_root_ca.pem -out /usr/share/ca-certificates/testsite/testsite_root_ca.crt
+chmod 755 /usr/share/ca-certificates/testsite/
+chmod 644 /usr/share/ca-certificates/testsite/testsite_root_ca.crt
+update-ca-certificates
+
+# make necessary directories
+mkdir -p /admin/logs
+
+curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer
+
+service apache2 reload
+SCRIPT
+
+$startup = <<STARTUP
+cd ~/
+set -ex
+
+apt-get update -q
+apt-get upgrade -qy
+
+service apache2 start
+STARTUP
+
+

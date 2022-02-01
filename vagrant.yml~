@@ -1,0 +1,36 @@
+# -----
+# Customisation for Vagrant
+# -----
+#
+# Don't update the Vagrantfile itself, as this makes it difficult to apply centeral updates.
+# Instead, keep all your configuration in this file.
+#
+# Don't forget to rename the file to 'vagrant.yml'
+
+# performance settings
+virtualbox:
+  cpus: 2
+  ram: 4000 
+
+# path to repos (relative or absolute)
+# defaults to directories in the same folder as this file
+path:
+  testsite: testsite
+  manage: manage
+  testseeker: testseeker
+  internal: testsiteinternal
+  local: local
+
+# Top Level Domain
+tld: dev # local machine
+# tld: staging # staging server
+
+# network settings
+network:
+  # local server config
+  type: private_network
+  ip: 192.168.33.10
+
+  # staging server config
+  # type: public_network
+  # ip: 

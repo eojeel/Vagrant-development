@@ -1,0 +1,30 @@
+# -----
+# Customisation for Vagrant
+# -----
+#
+# Don't update the Vagrantfile itself, as this makes it difficult to apply centeral updates.
+# Instead, keep all your configuration in this file.
+#
+# Don't forget to rename the file to 'vagrant.yml'
+
+# performance settings
+virtualbox:
+  cpus: 2
+  ram: 6144
+
+# path to repos (relative or absolute)
+# defaults to directories in the same folder as this file
+path:
+  restore_files: restore
+  mysql: mysql
+
+mysql:
+  root_password:
+
+# Top Level Domain
+tld: dev
+
+# network settings
+network:
+  type: public_network
+  ip: 

@@ -1,0 +1,346 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+require 'yaml'
+
+VAGRANTFILE_API_VERSION = "2"
+
+
+# fetch dev's custom settings
+file = 'vagrant.yml'
+
+unless File.file?(file)
+    FileUtils.cp(file + '.default', file)
+end
+
+settings = YAML.load_file File.join __dir__, file
+
+cpus = settings['virtualbox']['cpus']
+ram = settings['virtualbox']['ram']
+
+restore_files = settings['path']['restore_files']
+mysql = settings['path']['mysql']
+
+network_type = settings['network']['type']
+network_ip = settings['network']['ip']
+
+tld = settings['tld']
+
+root_password = settings['mysql']['root_password']
+
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+    config.vm.box = "ubuntu/trusty64"
+    
+    unless network_ip.nil? || network_ip.empty?
+        config.vm.network network_type, ip: network_ip
+    else
+        config.vm.network network_type
+        config.vm.network "forwarded_port", guest: 443, host: 443
+        config.vm.network "forwarded_port", guest: 3306, host: 3306
+    end
+
+    config.vm.provision :shell, inline: $setup
+    config.vm.provision :shell, inline: $startup,
+        run: "always"
+
+    config.vm.synced_folder restore_files, "/restore_files"
+    config.vm.synced_folder mysql, "/var/lib/mysql", id: "mysql",
+    owner: 200, group: 201,  # owner: "mysql", group: "mysql",
+    mount_options: ["dmode=775,fmode=664"]
+
+    config.vm.provider "virtualbox" do |vb|
+        # Display the VirtualBox GUI when booting the machine
+        vb.gui = false
+        # Customize the amount of memory on the VM:
+        vb.memory = ram
+        # set number of cpus to use:
+        vb.cpus = cpus
+    end
+end
+
+
+$startup = <<STARTUP
+cd ~/
+set -ex
+
+apt-get update -q
+apt-get upgrade -qy
+apt-get autoremove -qy
+
+service apache2 start
+service mysql start
+STARTUP
+
+
+$vhost_phpmyadmin = <<VHOSTPHPMYADMIN
+<VirtualHost *:443>
+    ServerAdmin webmaster@testsite.co.uk
+
+    SSLEngine on
+    SSLCertificateFile /vagrant/ssl/mysql.testsite.#{tld}.crt
+    SSLCertificateKeyFile /vagrant/ssl/mysql.testsite.#{tld}.key
+
+    ServerName mysql.testsite.#{tld}
+
+    DocumentRoot /var/www/mysql.testsite/
+</VirtualHost>
+VHOSTPHPMYADMIN
+
+
+$my_cnf = <<MYCNF
+#
+# The MySQL database server configuration file.
+#
+# For explanations see
+# http://dev.mysql.com/doc/mysql/en/server-system-variables.html
+# Remember to edit /etc/mysql/debian.cnf when changing the socket location.
+# Aspects by Percona Configuration Wizard (http://tools.percona.com/) version REL5-20120208
+# Configuration name testsiteserver1 generated for admin@testsite.co.uk at 2012-03-27 13:00:24
+
+[client]
+port                            = 3306
+socket                          = /var/run/mysqld/mysqld.sock
+default-character-set           = utf8mb4
+
+# This was formally known as [safe_mysqld]. Both versions are currently parsed.
+[mysqld_safe]
+socket                          = /var/run/mysqld/mysqld.sock
+nice                            = 0
+default-character-set           = utf8mb4
+
+[mysqld]
+
+# GENERAL & SAFETY
+user                            = mysql
+default_storage_engine          = InnoDB
+pid-file                        = /var/run/mysqld/mysqld.pid
+socket                          = /var/run/mysqld/mysqld.sock
+port                            = 3306
+sysdate_is_now                  = 1
+local-infile                    = 1
+
+# DATA STORAGE
+basedir                         = /usr
+datadir                         = /var/lib/mysql
+tmpdir                          = /tmp
+#tmpdir                         = /tmp
+lc-messages-dir                 = /usr/share/mysql
+skip_name_resolve               = 1
+character-set-client-handshake  = FALSE
+character-set-server            = utf8mb4
+collation-server                = utf8mb4_unicode_520_ci
+skip-external-locking
+
+# LOGGING
+# Error logging goes to syslog due to /etc/mysql/conf.d/mysqld_safe_syslog.cnf.
+#log_queries_not_using_indexes  = 1
+slow_query_log                  = 0
+slow_query_log_file             = /var/log/mysql/slow.log
+long_query_time                 = 0
+log-error                       = /var/log/mysql/error.log
+# BINARY LOGGING
+server-id                       = 1
+binlog_format                   = row
+
+# CACHES AND LIMITS
+# Disabling query cache is now recommended.
+query_cache_type                = 2
+query_cache_size                = 32M
+tmp_table_size                  = 2048M
+max_heap_table_size             = 2048M
+max_connections                 = 200
+back_log                        = 1000
+interactive_timeout             = 600
+wait_timeout                    = 600
+thread_cache_size               = 50
+thread_handling                 = pool-of-threads
+open_files_limit                = 65535
+table_definition_cache          = 10000
+table_open_cache                = 10000
+sort_buffer_size                = 524288
+read_buffer_size                = 524288
+read_rnd_buffer_size            = 262144
+join_buffer_size                = 786432
+
+# MyISAM
+key_buffer_size                 = 20M
+myisam_recover                  = FORCE,BACKUP
+max_allowed_packet              = 64M
+max_connect_errors              = 1000000
+
+# INNODB #
+innodb_flush_method             = O_DIRECT
+innodb_log_files_in_group       = 2
+innodb_log_file_size            = 768M
+innodb_flush_log_at_trx_commit  = 1
+innodb_file_per_table           = 1
+innodb_open_files               = 3072
+innodb_file_format              = barracuda
+innodb_file_format_max          = barracuda
+innodb_buffer_pool_size         = 7G
+innodb_log_buffer_size          = 2M
+innodb_additional_mem_pool_size = 25M
+innodb_large_prefix             = 1
+#innodb_thread_concurrency      = 16
+transaction-isolation=REPEATABLE-READ
+
+[mysqldump]
+quick
+quote-names
+max_allowed_packet              = 64M
+
+[mysql]
+#no-auto-rehash # faster start of mysql but no tab completition
+local-infile                    = 1
+default-character-set           = utf8mb4
+
+[isamchk]
+key_buffer                      = 256M
+
+#
+# * IMPORTANT: Additional settings that can override those from this file!
+#   The files must end with '.cnf', otherwise they'll be ignored.
+#
+!includedir /etc/mysql/conf.d/
+MYCNF
+
+
+$setup = <<SCRIPT
+export DEBIAN_FRONTEND=noninteractive
+cd ~/
+set -ex
+
+# ugly & slow, but should stop processes failing
+swapon -a
+
+# install prerequisites
+apt-get update -qq
+apt-get upgrade -qy
+
+apt-get install -qy apache2 php5 openssl php5-mysql mcrypt php5-mcrypt sysstat
+
+echo -e "ServerName mysql.testsite.#{tld}" >> /etc/apache2/apache2.conf
+
+# required to make things work
+a2enmod ssl
+a2enmod php5
+
+php5enmod mcrypt
+
+
+echo -e "#{$vhost_phpmyadmin}" > /etc/apache2/sites-available/mysql.conf
+
+a2dissite 000-default
+a2ensite mysql.conf
+
+
+# install percona
+
+# fix permissions for mounted folder
+groupadd -g 201 mysql
+useradd -u 200 -g 201 mysql
+usermod -L mysql
+
+wget https://repo.percona.com/apt/percona-release_0.1-4.$(lsb_release -sc)_all.deb
+dpkg -i percona-release_0.1-4.$(lsb_release -sc)_all.deb
+apt-get update -qq
+
+debconf-set-selections <<< "percona-server-server-5.6 percona-server-server/root_password password #{$root_password}"
+debconf-set-selections <<< "percona-server-server-5.6 percona-server-server/root_password_again password #{$root_password}"
+
+apt-get install -qy percona-server-server-5.6 percona-xtrabackup-24
+
+# fix mysql config
+# sed -i -e '/bind-address\s*=/ s/= .*/= 0.0.0.0/' /etc/mysql/my.cnf
+echo -e "#{$my_cnf}" > /etc/mysql/my.cnf
+
+# install phpmyadmin
+debconf-set-selections <<< "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2"
+debconf-set-selections <<< "phpmyadmin phpmyadmin/dbconfig-install boolean true"
+debconf-set-selections <<<  "phpmyadmin phpmyadmin/mysql/admin-user string root"
+debconf-set-selections <<<  "phpmyadmin phpmyadmin/mysql/admin-pass password #{$root_password}"
+
+apt-get install -qy phpmyadmin
+
+
+# ensure apache is set to launch at boot
+update-rc.d apache2 enable
+
+
+# install testsite's root SSL cert for development
+mkdir -p /usr/share/ca-certificates/testsite
+cp {/vagrant/ssl/root,/usr/share/ca-certificates/testsite}/testsite_root_ca.crt
+chmod 755 /usr/share/ca-certificates/testsite/
+chmod 644 /usr/share/ca-certificates/testsite/testsite_root_ca.crt
+update-ca-certificates
+
+
+service apache2 reload
+
+cat > /home/vagrant/database_refresh.sh <<"EOF"
+#!/bin/bash
+
+if [[ $EUID -ne 0 ]]; then
+echo "This script must be run as root"
+exit 1
+fi
+
+set -ex
+
+PASSWORD=$1
+
+service mysql stop
+
+rm -rf /var/lib/mysql/* || true
+
+# copy files into correct location
+echo "Copying backup file to mysql folder!"
+rsync -avpP /restore_files/* /var/lib/mysql
+
+# unzip files
+echo "Unzipping files"
+echo 'Unzipping database'
+cd /var/lib/mysql
+find . -name "*.bz2" | xargs -P 5 -I fileName sh -c 'bzip2 -fd "$(dirname "fileName")/$(basename -s .bz2 "fileName")" "fileName"'
+
+rm -r ibtmp* || true
+rm -r ib_logfile* || true
+
+xtrabackup --prepare --target-dir=/var/lib/mysql/
+
+echo 'Resetting root password'
+debconf-set-selections <<< "percona-server-server-5.6 percona-server-server/root_password password $PASSWORD"
+debconf-set-selections <<< "percona-server-server-5.6 percona-server-server/root_password_again password $PASSWORD"
+dpkg-reconfigure -fnoninteractive percona-server-server-5.6
+
+# fix mysql config
+# sed -i -e '/bind-address\s*=/ s/= .*/= 0.0.0.0/' /etc/mysql/my.cnf
+echo -e "#{$my_cnf}" > /etc/mysql/my.cnf
+
+service mysql start
+
+echo 'Installing phpmyadmin tables'
+debconf-set-selections <<< "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2"
+debconf-set-selections <<< "phpmyadmin phpmyadmin/dbconfig-install boolean true"
+debconf-set-selections <<<  "phpmyadmin phpmyadmin/mysql/admin-user string root"
+debconf-set-selections <<<  "phpmyadmin phpmyadmin/mysql/admin-pass password $PASSWORD"
+dpkg-reconfigure -fnoninteractive phpmyadmin
+
+# update permissions for all database users
+echo 'Updating permissions'
+
+USERS=$(mysql -u root -p$PASSWORD -NB -e "SELECT GROUP_CONCAT(CONCAT_WS('@', QUOTE(user), QUOTE(host))) FROM mysql.user GROUP BY NULL ORDER BY user, host;")
+mysql -u root -p$PASSWORD -e "GRANT ALL PRIVILEGES ON *.* TO $USERS;FLUSH PRIVILEGES;"
+
+echo "Database refresh complete!"
+EOF
+
+chmod +x /home/vagrant/database_refresh.sh
+
+# run the refresh weekly (6:30am on Sunday)
+crontab -l | { cat; echo "30 6 * * 0 /home/vagrant/database_refresh.sh #{$root_password}"; } | crontab -
+
+wget -O /home/vagrant/meminfo.py https://raw.githubusercontent.com/pixelb/ps_mem/master/ps_mem.py
+chmod +x /home/vagrant/meminfo.py
+
+SCRIPT
